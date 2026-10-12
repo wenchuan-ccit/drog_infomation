@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>藥品動態條碼快速查詢系統</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2/dist/quagga.min.js"></script>
+  
+  <style>
+    #interactive.viewport video, 
+    #interactive.viewport canvas {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+    }
+    @keyframes laserScan {
+      0%, 100% { opacity: 0.4; transform: scaleY(0.8); }
+      50% { opacity: 1; transform: scaleY(1.2); }
+    }
+    .laser-line {
+      animation: laserScan 1.5s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 pb-20 text-base">
+
+  <header class="bg-indigo-700 text-white p-4 shadow-md text-center text-xl font-bold">
+    🔍 藥品條碼快速查詢系統
+  </header>
+
+  <main class="max-w-md mx-auto p-4 space-y-4">
+
+    <!-- 1. 條碼動態掃描區 -->
+    <div class="bg-white p-5 rounded-2xl shadow space-y-4 border border-slate-200">
+      <div class="flex justify-between items-center border-b pb-2">
+        <h2 class="font-bold text-slate-700 text-lg">📷 Code-128 動態掃描器</h2>
+        <span id="scanStatus" class="text-sm px-3 py-1 rounded-full bg-slate-100 text-slate-600 font-semibold">相機已停止</span>
+      </div>
+
+      <div id="interactive" class="viewport relative w-full h-72 bg-black rounded-xl overflow-hidden flex items-center justify-center">
+        <p id="cameraPlaceholder" class="text-white text-base z-0">請點擊下方按鈕啟動相機</p>
+        <div id="scanOverlay" class="absolute z-10 pointer-events-none w-3/4 h-36 border-2 border-indigo-500/80 rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(99,102,241,0.3)] hidden">
+          <div class="laser-line w-full h-0.5 bg-indigo-500 shadow-[0_0_8px_#6366f1]"></div>
+          <span class="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-indigo-400 rounded-tl"></span>
+          <span class="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-indigo-400 rounded-tr"></span>
+          <span class="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-indigo-400 rounded-bl"></span>
+          <span class="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-indigo-400 rounded-br"></span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="startScanner()" class="bg-indigo-600 hover:bg-indigo-700 text-white py-3.5 rounded-xl font-bold text-base shadow transition">
+          ▶ 啟動即時掃描
+        </button>
+        <button onclick="stopScanner()" class="bg-slate-500 hover:bg-slate-600 text-white py-3.5 rounded-xl font-bold text-base shadow transition">
+          ⏹ 關閉相機
+        </button>
+      </div>
+
+      <div class="pt-2 border-t">
+        <div class="flex gap-2">
+          <input id="manualBarcode" type="text" placeholder="或手動輸入條碼..." class="flex-1 border px-3.5 py-2.5 rounded-xl text-base focus:ring-2 focus:ring-indigo-600 outline-none">
+          <button onclick="searchManualBar()" class="bg-slate-700 hover:bg-slate-800 text-white px-5 py-2.5 rounded-xl text-base font-semibold transition">查詢</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. 藥品詳細資訊卡片 (純展示) -->
+    <div id="medicineCard" class="bg-white p-5 rounded-2xl shadow hidden space-y-4 border border-slate-200">
+      
+      <!-- 基礎資訊顯示 (順序：英文品名 -> 中文品名 -> 許可證字號) -->
+      <div class="flex gap-4 items-start border-b pb-4">
+        <img id="medImg" src="" class="w-28 h-28 object-cover rounded-xl border bg-slate-50 flex-shrink-0" alt="藥品圖片">
+        <div class="space-y-1.5 flex-1 min-w-0">
+          <h3 id="medEnglishName" class="text-lg font-extrabold text-slate-900 break-words">--</h3>
+          <p id="medChineseName" class="text-sm font-bold text-slate-600 break-words">--</p>
+          <div class="pt-0.5">
+            <span class="text-xs font-bold bg-slate-100 text-slate-600 px-2.0 py-1 rounded-md inline-block">
+              📜許可證：<span id="medLicenseNo">--</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 狀態顯示 -->
+      <div id="restockBadge" class="p-3 rounded-xl text-center font-bold text-base">--</div>
+
+      <!-- 庫存數據與備考唯讀檢視 -->
+      <div class="grid grid-cols-2 gap-3 pt-1">
+        <div class="bg-slate-50 p-3 rounded-xl border">
+          <span class="text-xs text-slate-500 font-bold block">清點數</span>
+          <span id="textCounted" class="text-base font-extrabold text-slate-800">--</span>
+        </div>
+        <div class="bg-slate-50 p-3 rounded-xl border">
+          <span class="text-xs text-slate-500 font-bold block">進貨量</span>
+          <span id="textPurchaseQty" class="text-base font-extrabold text-slate-800">--</span>
+        </div>
+      </div>
+
+      <div class="bg-slate-50 p-3 rounded-xl border">
+        <span class="text-xs text-slate-500 font-bold block">備考說明</span>
+        <span id="textRemarks" class="text-sm font-semibold text-slate-700">目前無備考</span>
+      </div>
+
+    </div>
+
+  </main>
+
+  <script>
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyZjhuiXLHga2AUxIOVlq4dEoHrxtYT3erAZ60LXUVtWKTEfHS8I-3NR3AuncqxZZ9n/exec";
+    
+    let currentBarcode = null;
+    let isScanning = false;
+
+    function updateStatus(msg, isError = false) {
+      const el = document.getElementById('scanStatus');
+      el.innerText = msg;
+      el.className = isError 
+        ? "text-sm px-3 py-1 rounded-full bg-rose-100 text-rose-800 font-semibold"
+        : "text-sm px-3 py-1 rounded-full bg-indigo-100 text-indigo-800 font-semibold";
+    }
+
+    // 透過原生 WebRTC Track 補強對焦
+    function triggerAutoFocus() {
+      try {
+        const videoTracks = Quagga.CameraAccess.getActiveStreamTracks();
+        if (videoTracks && videoTracks.length > 0) {
+          const track = videoTracks[0];
+          const capabilities = track.getCapabilities();
+          if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+            track.applyConstraints({
+              advanced: [{ focusMode: 'continuous' }]
+            }).catch(err => console.log("自動對焦約束套用失敗:", err));
+          }
+        }
+      } catch (e) {
+        console.log("此裝置不支援 WebRTC 對焦控制:", e);
+      }
+    }
+
+    function startScanner() {
+      if (isScanning) return;
+      Quagga.init({
+        inputStream: {
+          name: "Live",
+          type: "LiveStream",
+          target: document.querySelector('#interactive'),
+          constraints: { 
+            facingMode: "environment", 
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            aspectRatio: { min: 1, max: 2 } 
+          }
+        },
+        decoder: { readers: ["code_128_reader"] },
+        locate: true
+      }, function(err) {
+        if (err) {
+          updateStatus("相機啟動失敗", true);
+          return;
+        }
+        Quagga.start();
+        isScanning = true;
+        
+        setTimeout(triggerAutoFocus, 500);
+
+        document.getElementById('scanOverlay').classList.remove('hidden');
+        document.getElementById('cameraPlaceholder').classList.add('hidden');
+        updateStatus("📷 請將條碼對準紅線...");
+      });
+      Quagga.onDetected(onBarcodeDetected);
+    }
+
+    function stopScanner() {
+      if (isScanning) {
+        Quagga.stop();
+        isScanning = false;
+        document.getElementById('scanOverlay').classList.add('hidden');
+        document.getElementById('cameraPlaceholder').classList.remove('hidden');
+        updateStatus("相機已停止");
+      }
+    }
+
+    function onBarcodeDetected(result) {
+      if (result && result.codeResult && result.codeResult.code) {
+        const code = result.codeResult.code;
+        if (code === currentBarcode) return;
+        currentBarcode = code;
+        document.getElementById('manualBarcode').value = code;
+        updateStatus("✅ 掃描成功：" + code);
+        if (navigator.vibrate) navigator.vibrate(100);
+        stopScanner();
+        queryMedicine(code);
+      }
+    }
+
+    function searchManualBar() {
+      const val = document.getElementById('manualBarcode').value.trim();
+      if (val) {
+        currentBarcode = val;
+        queryMedicine(val);
+      }
+    }
+
+    async function queryMedicine(barcode) {
+      updateStatus("資料庫查詢中...");
+      try {
+        const res = await fetch(`${GAS_API_URL}?action=getMedicine&barcode=${encodeURIComponent(barcode)}`);
+        const data = await res.json();
+        updateStatus(data.found ? "查詢成功" : "試算表未找到該藥品");
+        renderMedicineCard(data);
+      } catch (e) {
+        updateStatus("查詢失敗", true);
+      }
+    }
+
+    function renderMedicineCard(data) {
+      document.getElementById('medicineCard').classList.remove('hidden');
+      document.getElementById('medEnglishName').innerText = data.englishName || "（無英文品名）";
+      document.getElementById('medChineseName').innerText = data.chineseName || "（無中文品名）";
+      document.getElementById('medLicenseNo').innerText = data.licenseNo || "無";
+      document.getElementById('medImg').src = data.imageUrl || "https://via.placeholder.com/150?text=No+Image";
+
+      // 狀態標籤顯示
+      const badge = document.getElementById('restockBadge');
+      if (data.needRestock) {
+        badge.className = "p-3 rounded-xl text-center font-bold text-base bg-rose-100 text-rose-800 border border-rose-200";
+        badge.innerText = "⚠️ 狀態：需要備貨";
+      } else {
+        badge.className = "p-3 rounded-xl text-center font-bold text-base bg-emerald-100 text-emerald-800 border border-emerald-200";
+        badge.innerText = "✅ 狀態：庫存正常（無需備貨）";
+      }
+
+      // 唯讀數值填入
+      document.getElementById('textCounted').innerText = (data.countedStock !== "" && data.countedStock !== undefined) ? data.countedStock : "無";
+      document.getElementById('textPurchaseQty').innerText = (data.purchaseQty !== "" && data.purchaseQty !== undefined) ? data.purchaseQty : "無";
+      document.getElementById('textRemarks').innerText = (data.remarks !== "" && data.remarks !== undefined) ? data.remarks : "目前無備考";
+    }
+  </script>
+</body>
+</html>
